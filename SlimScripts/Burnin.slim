@@ -1,0 +1,29 @@
+// The number of generations in the burnin process depends on the population size (typically ten times the population size). If it needs to be changed, change the "10000" value in begining of the third and fourth section to the number of generations desired. 
+
+initialize() {
+	// set mutation rate
+	initializeMutationRate(Mu);
+	
+	// neutral mutations
+	initializeMutationType("m1", 0.5, "f", 0.0);
+	initializeGenomicElementType("g1", m1, 1.0);
+	
+	// set up the chromosome
+	initializeGenomicElement(g1, 0, LCh-1);
+	
+	// set recombination rate
+	initializeRecombinationRate(RecRate, LCh-1); 
+}
+
+1 early() {
+	// define a population
+	sim.addSubpop("p1", BurninSize);
+}
+
+10000 late(){
+	// save the output of the burnin
+	sim.outputFull(BurninPath + "SimRep" + SimRepID + "/" + BurninFilename);
+}
+
+s1 10000 late() {
+}
