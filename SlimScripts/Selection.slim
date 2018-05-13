@@ -1,0 +1,207 @@
+// The only variable that needs to be defined in the slim file is number of generations in the selection experiment. It is defined in the last section of this file, in the line "10000:10010 late() {". In this example, the selection experiment lasts 11 generations. If you want to set it to 100 generation, for example, this line should become "10000:10099 late() {"
+
+// Depending on the population size, more or fewer burnin generations might be needed. If that's the case, the number 10000 in the begining of each section might also need to be changed. 
+
+initialize() {	initializeMutationRate(0);		// neutral mutations	initializeMutationType("m1", 0.5, "f", 0.0);	initializeGenomicElementType("g1", m1, 1.0);
+	m1.convertToSubstitution = F;	// mutations representing alleles in QTLs	initializeMutationType("m2", D, "f", 0.0);	m2.convertToSubstitution = F;		// a mutation type used to evaluate phenotypic fitness	initializeMutationType("m3", 0.5, "f", 0.0);	m3.convertToSubstitution = F;		
+	// set up the chromosome
+	initializeGenomicElement(g1, 0, LCh-1);	
+	// set recombination rate; change this if several chromosomes are simulated	initializeRecombinationRate(RecRate, LCh-1); 
+	
+}
+10000 late() {	// read the burn-in	sim.readFromPopulationFile(BurninPath + "SimRep" + SimRepID + "/" + BurninFilename);
+			// give an m3 mutation to every individual, for phenotypic fitness	sim.subpopulations.genomes.addNewMutation(m3, 0.0, 0);
+	
+	// sanity check
+	// print(size(unique(sim.subpopulations.genomes.mutationsOfType(m1))));
+	// print(size(unique(sim.subpopulations.genomes.mutationsOfType(m1).position)));
+	
+	// get all SNPs within an starting frequency interval
+	if (LowFreq == T)
+		FreqencyConstrainedMutations=unique(sim.subpopulations.genomes.mutationsOfType(m1))[
+		which(sim.mutationFrequencies(p1, unique(sim.subpopulations.genomes.mutationsOfType(m1))) <= FreqBound | 
+		sim.mutationFrequencies(p1, unique(sim.subpopulations.genomes.mutationsOfType(m1))) >= (1-FreqBound))];
+	else 
+		FreqencyConstrainedMutations=unique(sim.subpopulations.genomes.mutationsOfType(m1))[
+		which(sim.mutationFrequencies(p1, unique(sim.subpopulations.genomes.mutationsOfType(m1))) >= FreqBound & 
+		sim.mutationFrequencies(p1, unique(sim.subpopulations.genomes.mutationsOfType(m1))) <= (1-FreqBound))];
+
+
+	// get all SNPs within one region of a chromosome
+	ClusteredMutations=unique(FreqencyConstrainedMutations)
+	[which(FreqencyConstrainedMutations.position >= LowerPosBound & 
+	FreqencyConstrainedMutations.position <= UpperPosBound)];
+
+	// set seed so that QTLs remain the same within one simulation replication
+	setSeed(SimRepID); 
+	
+	// sample QTLs at random after the frequency and position constraints are imposed
+	QTL=sample(ClusteredMutations,NQTL);
+	QTL.setMutationType(m2);
+	
+	// assign positive effect sizes to all QTLs first
+	if (ESDist == "f")
+		for (IndividualQTL in QTL)
+		{
+		IndividualQTL.setSelectionCoeff(ESMean);
+		}
+	else if (ESDist == "e")
+		for (IndividualQTL in QTL)
+		{
+		IndividualQTL.setSelectionCoeff(rexp(1,ESMean));
+		}
+	
+	// assign negative effect sizes to half of the QTLs
+	Negative = sample(0:(NQTL-1), asInteger(NQTL/2));	
+	print(Negative);
+	NegativeQTL = QTL[Negative];
+	for (IndividualQTL in NegativeQTL)
+		{
+		IndividualQTL.setSelectionCoeff(-(IndividualQTL.selectionCoeff));
+		}
+	// if there is epistasis, randomly set up epistatic pairs
+	if (Epistasis == T)
+		QTL.tag = 1:NQTL;
+		
+	// set experimental population size (only takes effect in the next generation)
+   p1.setSubpopulationSize(PopSize);
+   
+   // more sanity checks
+	// print(sim.subpopulations);
+	// print(size(sim.subpopulations.individuals));
+	
+	// set different seeds for different experimental replications for later steps
+   setSeed(SimRepID*ExpRepID);    
+	
+	// even more checks
+	// print(QTL);
+	// print(QTL.position);
+	// print(sim.mutationFrequencies(p1, QTL));
+}10000: late() {	// define generation number
+	GenID = sim.generation-9999;
+
+	// define individual tags as phenotypes for the additive effects of QTLs while accounting for dominance
+	for (individual in sim.subpopulations.individuals)	{
+			if (Epistasis == F)
+			{
+				// extract sites when the mutant alleles are hehomozygous or heterozygous as needed for dominance scenarios 
+				Homo = individual.genomes[0].mutationsOfType(m2)[match(individual.genomes[0].mutationsOfType(m2),individual.genomes[1].mutationsOfType(m2))>=0];
+				Hetero = c(
+				individual.genomes[0].mutationsOfType(m2)[match(individual.genomes[0].mutationsOfType(m2),individual.genomes[1].mutationsOfType(m2))<0],
+				individual.genomes[1].mutationsOfType(m2)[match(individual.genomes[1].mutationsOfType(m2),individual.genomes[0].mutationsOfType(m2))<0]);
+				
+				// checks continued 
+				// print(Homo);
+				// print(Hetero);
+				
+				// use phenotypic value to define individual tag
+				individual.tag = asInteger(sum(Homo.selectionCoeff)*10000)*2+asInteger(sum(Hetero.selectionCoeff*Hetero.mutationType.dominanceCoeff)*10000)*2; // multiply by 10000 since individual tag can only be integers
+			}
+			
+			// if there is epistasis, define individual tags differently according to the epistasis scenario chosen
+			else if (Epistasis == T)
+			{
+				individual.tag = 0; // first set individual tag to be 0
+				for (EpistasisPair in 1:asInteger(NQTL/2)) // extract information on each epistatic pair for each individual
+				{	
+					EpistasisMutation1 = individual.genomes.mutationsOfType(m2)[which(individual.genomes.mutationsOfType(m2).tag == 2*EpistasisPair-1)];
+					EpistasisMutation2 = individual.genomes.mutationsOfType(m2)[which(individual.genomes.mutationsOfType(m2).tag == 2*EpistasisPair)];
+					UniqueEpistasisMutation1 = unique(EpistasisMutation1);
+					UniqueEpistasisMutation2 = unique(EpistasisMutation2);
+					S1 = abs(UniqueEpistasisMutation1.selectionCoeff);
+					S2 = abs(UniqueEpistasisMutation2.selectionCoeff);
+					D1 = UniqueEpistasisMutation1.mutationType.dominanceCoeff;
+					D2 = UniqueEpistasisMutation2.mutationType.dominanceCoeff;
+					sign = (-1)^EpistasisPair; // give half of the pairs effect sizes the reverse of the epistatic scenario defined to make sure the mean trait value is ~0 in the first generation
+					
+					// for each pair, calculate its contribution to the phenotype and add it to the individual tag
+					if (size(EpistasisMutation1) == 2)
+					{ 
+						//print(c("EpistasisMutation1Homo"));
+						if (size(EpistasisMutation2) == 2)
+							individual.tag=individual.tag+asInteger(EpiSce[8]/4*(2*S1 + 2*S2)*10000*sign);
+						else if (size(EpistasisMutation2) == 1)
+							individual.tag=individual.tag+asInteger(EpiSce[7]/3*(2*S1 + 2*D2*S2)*10000*sign);
+						else
+							individual.tag=individual.tag+asInteger(EpiSce[6]/2*(2*S1 + 0)*10000*sign);
+					}
+					else if (size(EpistasisMutation1) == 1)
+					{
+						//print(c("EpistasisMutation1Hetero"));
+						if (size(EpistasisMutation2) == 2)
+							individual.tag=individual.tag+asInteger(EpiSce[5]/3*(2*D1*S1 + 2*S2)*10000*sign);
+						else if (size(EpistasisMutation2) == 1)
+							individual.tag=individual.tag+asInteger(EpiSce[4]/2*(2*D1*S1 + 2*D2*S2)*10000*sign);
+						else
+							individual.tag=individual.tag+asInteger(EpiSce[3]/1*(2*D1*S1 + 0)*10000*sign);
+					}
+					else if (size(EpistasisMutation1) == 0)
+					{
+						if (size(EpistasisMutation2) == 2)
+							individual.tag=individual.tag+asInteger(EpiSce[2]/2*(0 + 2*S2)*10000*sign);
+						else if (size(EpistasisMutation2) == 1)
+							individual.tag=individual.tag+asInteger(EpiSce[1]/1*(0 + 2*D2*S2)*10000*sign);
+						else
+							individual.tag=individual.tag;
+					}
+					else 
+					{
+					print("ERROR");
+					}
+				}
+			}					
+	}
+	
+	
+	// output the traits
+	Traits = paste(sim.subpopulations.individuals.tag/10000, "\n"); //divide by 1000 to return the original trait value
+	if (Direction == F)
+		writeFile(OutPath + "SimRep" + SimRepID + "/ExpRepPlus" + ExpRepID + "/Gen" + GenID + "_Trait.txt", Traits, F);
+	else
+		writeFile(OutPath + "SimRep" + SimRepID + "/ExpRepMinus" + ExpRepID + "/Gen" + GenID + "_Trait.txt", Traits, F);
+	
+	// output number of persisting QTLs each generation
+	NSegregatingQTL = paste(size(unique(sim.subpopulations.individuals.genomes.mutationsOfType(m2))));
+	if (Direction == F)
+		writeFile(OutPath + "SimRep" + SimRepID + "/ExpRepPlus" + ExpRepID + "/Gen" + GenID + "_NSegregatingQTL.txt", NSegregatingQTL, F);
+	else
+		writeFile(OutPath + "SimRep" + SimRepID + "/ExpRepMinus" + ExpRepID + "/Gen" + GenID + "_NSegregatingQTL.txt", NSegregatingQTL, F);
+
+
+	// get the phenotypic order for all individuals in order to perform truncating selection; change this if a different seelction regime is used
+	Order = order(sim.subpopulations.individuals.tag, Direction);
+	
+	// redefine individual tags as their phenotypic ranks 
+	sim.subpopulations.individuals.tag[Order] = 0:(size(sim.subpopulations.individuals)-1);
+}
+10000: fitness(m2) {	// the QTLs themselves are neutral; the m3 mutation type handles them	return 1.0;	}
+	
+10000: fitness(m3) {	// keep only the 100 highest ranking individuals and remove all others
+	if(individual.tag < SelectedSize) 
+		return 1.0;
+	else 
+		return 0.0;} 
+
+
+10000:10010 late() {
+	GenID = sim.generation-9999;
+	// last sanity check
+	//print(GenID);
+	//print(size(unique(sim.subpopulations.genomes.mutationsOfType(m1))));
+	//print(size(unique(sim.subpopulations.genomes.mutationsOfType(m2))));
+	//print(size(unique(sim.subpopulations.genomes.mutations)));
+	AllIndividuals = sim.subpopulations.individuals;
+	SampledIndividuals = sample(AllIndividuals, SampleSize);
+	// output sampled population
+	if (Direction == F)
+		SampledIndividuals.genomes.output(OutPath + "SimRep" + SimRepID + "/ExpRepPlus" + ExpRepID + "/Gen" + GenID + "_Sample.txt");
+	else
+		SampledIndividuals.genomes.output(OutPath + "SimRep" + SimRepID + "/ExpRepMinus" + ExpRepID + "/Gen" + GenID + "_Sample.txt");
+	
+	// output full population
+	if (Direction == F)
+		AllIndividuals.genomes.output(OutPath + "SimRep" + SimRepID + "/ExpRepPlus" + ExpRepID + "/Gen" + GenID + "_Full.txt");
+	else
+		AllIndividuals.genomes.output(OutPath + "SimRep" + SimRepID + "/ExpRepMinus" + ExpRepID + "/Gen" + GenID + "_Full.txt");	
+}
+
